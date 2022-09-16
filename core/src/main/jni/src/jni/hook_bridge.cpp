@@ -159,6 +159,16 @@ LSP_DEF_NATIVE_METHOD(jobjectArray, HookBridge, callbackSnapshot, jobject method
     return res;
 }
 
+thread_local int callback_depth = 0;
+
+LSP_DEF_NATIVE_METHOD(jint, HookBridge, callbackDepth) {
+    return callback_depth;
+}
+
+LSP_DEF_NATIVE_METHOD(void, HookBridge, setCallbackDepth, jint callbackDepth) {
+    callback_depth = callbackDepth;
+}
+
 static JNINativeMethod gMethods[] = {
     LSP_NATIVE_METHOD(HookBridge, hookMethod, "(Ljava/lang/reflect/Executable;Ljava/lang/Class;ILjava/lang/Object;)Z"),
     LSP_NATIVE_METHOD(HookBridge, unhookMethod, "(Ljava/lang/reflect/Executable;Ljava/lang/Object;)Z"),
@@ -167,6 +177,8 @@ static JNINativeMethod gMethods[] = {
     LSP_NATIVE_METHOD(HookBridge, instanceOf, "(Ljava/lang/Object;Ljava/lang/Class;)Z"),
     LSP_NATIVE_METHOD(HookBridge, setTrusted, "(Ljava/lang/Object;)Z"),
     LSP_NATIVE_METHOD(HookBridge, callbackSnapshot, "(Ljava/lang/reflect/Executable;)[Ljava/lang/Object;"),
+    LSP_NATIVE_METHOD(HookBridge, callbackDepth, "()I"),
+    LSP_NATIVE_METHOD(HookBridge, setCallbackDepth, "(I)V"),
 };
 
 void RegisterHookBridge(JNIEnv *env) {

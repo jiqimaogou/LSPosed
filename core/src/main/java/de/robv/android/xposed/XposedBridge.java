@@ -413,95 +413,112 @@ public final class XposedBridge {
         // This method is quite critical. We should try not to use system methods to avoid
         // endless recursive
         public Object callback(Object[] args) throws Throwable {
-            XC_MethodHook.MethodHookParam param = new XC_MethodHook.MethodHookParam();
+            int callbackDepth = HookBridge.callbackDepth();
+            HookBridge.setCallbackDepth(callbackDepth + 1);
+            try {
+                var array = ((Object[]) params);
 
-            var array = ((Object[]) params);
+                var method = (Executable) array[0];
+                var returnType = (Class<?>) array[1];
+                var isStatic = (Boolean) array[2];
 
-            var method = (Executable) array[0];
-            var returnType = (Class<?>) array[1];
-            var isStatic = (Boolean) array[2];
+                XC_MethodHook.MethodHookParam param;
 
-            param.method = method;
-
-            if (isStatic) {
-                param.thisObject = null;
-                param.args = args;
-            } else {
-                param.thisObject = args[0];
-                param.args = new Object[args.length - 1];
-                //noinspection ManualArrayCopy
-                for (int i = 0; i < args.length - 1; ++i) {
-                    param.args[i] = args[i + 1];
-                }
-            }
-
-            Object[] callbacksSnapshot = HookBridge.callbackSnapshot(method);
-            if (callbacksSnapshot == null || callbacksSnapshot.length == 0) {
-                try {
-                    return HookBridge.invokeOriginalMethod(method, param.thisObject, param.args);
-                } catch (InvocationTargetException ite) {
-                    throw (Throwable) HookBridge.invokeOriginalMethod(getCause, ite);
-                }
-            }
-
-            // call "before method" callbacks
-            int beforeIdx = 0;
-            do {
-                try {
-                    ((XC_MethodHook) callbacksSnapshot[beforeIdx]).beforeHookedMethod(param);
-                } catch (Throwable t) {
-                    XposedBridge.log(t);
-
-                    // reset result (ignoring what the unexpectedly exiting callback did)
-                    param.setResult(null);
-                    param.returnEarly = false;
-                    continue;
+                if (isStatic) {
+                    param = new XC_MethodHook.MethodHookParam();
+                    param.thisObject = null;
+                    param.args = args;
+                } else {
+                    Object thisObject = args[0];
+                    Object[] objects = new Object[args.length - 1];
+                    //noinspection ManualArrayCopy
+                    for (int i = 0; i < args.length - 1; ++i) {
+                        objects[i] = args[i + 1];
+                    }
+                    if (callbackDepth > 0) {
+                        try {
+                            return HookBridge.invokeOriginalMethod(method, thisObject, objects);
+                        } catch (InvocationTargetException ite) {
+                            throw (Throwable) HookBridge.invokeOriginalMethod(getCause, ite);
+                        }
+                    }
+                    param = new XC_MethodHook.MethodHookParam();
+                    param.thisObject = thisObject;
+                    param.args = objects;
                 }
 
-                if (param.returnEarly) {
-                    // skip remaining "before" callbacks and corresponding "after" callbacks
-                    beforeIdx++;
-                    break;
+                param.method = method;
+
+                Object[] callbacksSnapshot = HookBridge.callbackSnapshot(method);
+                if (callbacksSnapshot == null || callbacksSnapshot.length == 0) {
+                    try {
+                        return HookBridge.invokeOriginalMethod(method, param.thisObject, param.args);
+                    } catch (InvocationTargetException ite) {
+                        throw (Throwable) HookBridge.invokeOriginalMethod(getCause, ite);
+                    }
                 }
-            } while (++beforeIdx < callbacksSnapshot.length);
 
-            // call original method if not requested otherwise
-            if (!param.returnEarly) {
-                try {
-                    param.setResult(HookBridge.invokeOriginalMethod(method, param.thisObject, param.args));
-                } catch (InvocationTargetException e) {
-                    param.setThrowable((Throwable) HookBridge.invokeOriginalMethod(getCause, e));
+                // call "before method" callbacks
+                int beforeIdx = 0;
+                do {
+                    try {
+                        ((XC_MethodHook) callbacksSnapshot[beforeIdx]).beforeHookedMethod(param);
+                    } catch (Throwable t) {
+                        XposedBridge.log(t);
+
+                        // reset result (ignoring what the unexpectedly exiting callback did)
+                        param.setResult(null);
+                        param.returnEarly = false;
+                        continue;
+                    }
+
+                    if (param.returnEarly) {
+                        // skip remaining "before" callbacks and corresponding "after" callbacks
+                        beforeIdx++;
+                        break;
+                    }
+                } while (++beforeIdx < callbacksSnapshot.length);
+
+                // call original method if not requested otherwise
+                if (!param.returnEarly) {
+                    try {
+                        param.setResult(HookBridge.invokeOriginalMethod(method, param.thisObject, param.args));
+                    } catch (InvocationTargetException e) {
+                        param.setThrowable((Throwable) HookBridge.invokeOriginalMethod(getCause, e));
+                    }
                 }
-            }
 
-            // call "after method" callbacks
-            int afterIdx = beforeIdx - 1;
-            do {
-                Object lastResult = param.getResult();
-                Throwable lastThrowable = param.getThrowable();
+                // call "after method" callbacks
+                int afterIdx = beforeIdx - 1;
+                do {
+                    Object lastResult = param.getResult();
+                    Throwable lastThrowable = param.getThrowable();
 
-                try {
-                    ((XC_MethodHook) callbacksSnapshot[afterIdx]).afterHookedMethod(param);
-                } catch (Throwable t) {
-                    XposedBridge.log(t);
+                    try {
+                        ((XC_MethodHook) callbacksSnapshot[afterIdx]).afterHookedMethod(param);
+                    } catch (Throwable t) {
+                        XposedBridge.log(t);
 
-                    // reset to last result (ignoring what the unexpectedly exiting callback did)
-                    if (lastThrowable == null)
-                        param.setResult(lastResult);
-                    else
-                        param.setThrowable(lastThrowable);
+                        // reset to last result (ignoring what the unexpectedly exiting callback did)
+                        if (lastThrowable == null)
+                            param.setResult(lastResult);
+                        else
+                            param.setThrowable(lastThrowable);
+                    }
+                } while (--afterIdx >= 0);
+
+                // return
+                if (param.hasThrowable())
+                    throw param.getThrowable();
+                else {
+                    var result = param.getResult();
+                    if (returnType != null && !returnType.isPrimitive() && !HookBridge.instanceOf(result, returnType)) {
+                        throw new ClassCastException(castException);
+                    }
+                    return result;
                 }
-            } while (--afterIdx >= 0);
-
-            // return
-            if (param.hasThrowable())
-                throw param.getThrowable();
-            else {
-                var result = param.getResult();
-                if (returnType != null && !returnType.isPrimitive() && !HookBridge.instanceOf(result, returnType)) {
-                    throw new ClassCastException(castException);
-                }
-                return result;
+            } finally {
+                HookBridge.setCallbackDepth(callbackDepth);
             }
         }
     }

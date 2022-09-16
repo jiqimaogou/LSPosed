@@ -20,4 +20,10 @@ public class HookBridge {
     public static native boolean setTrusted(Object cookie);
 
     public static native Object[] callbackSnapshot(Executable method);
+
+    @FastNative
+    public static native int callbackDepth();
+
+    @FastNative
+    public static native void setCallbackDepth(int callbackDepth);
 }
